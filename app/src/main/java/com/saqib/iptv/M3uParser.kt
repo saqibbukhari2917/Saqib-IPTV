@@ -1,8 +1,15 @@
 package com.saqib.iptv
 
-data class TvChannel(val name: String, val url: String, val group: String, val logo: String = "") {
+data class TvChannel(
+    val name: String,
+    val url: String,
+    val group: String,
+    val logo: String = "",
+    private val countryOverride: String = ""
+) {
     val country: String
         get() {
+            if (countryOverride.isNotBlank()) return countryOverride
             val value = "$group $name".lowercase()
             return when {
                 listOf("pakistan", "pak", "geo", "ary", "hum tv", "ptv", "express", "bol news").any { it in value } -> "Pakistan"
@@ -13,7 +20,7 @@ data class TvChannel(val name: String, val url: String, val group: String, val l
 }
 
 object M3uParser {
-    fun parse(content: String): List<TvChannel> {
+    fun parse(content: String, country: String = ""): List<TvChannel> {
         val result = mutableListOf<TvChannel>()
         var pendingName: String? = null
         var pendingGroup = ""
@@ -28,7 +35,7 @@ object M3uParser {
                 }
                 line.isNotEmpty() && !line.startsWith("#") && pendingName != null -> {
                     if (line.startsWith("http://", true) || line.startsWith("https://", true)) {
-                        result += TvChannel(pendingName!!, line, pendingGroup, pendingLogo)
+                        result += TvChannel(pendingName!!, line, pendingGroup, pendingLogo, country)
                     }
                     pendingName = null
                     pendingGroup = ""
