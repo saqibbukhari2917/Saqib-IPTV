@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
                                 status = "Checking 0 / ${unique.size} streams..."
                             }
                             val gate = Semaphore(16)
+                            val working = mutableListOf<TvChannel>()
                             var checked = 0
                             unique.map { channel ->
                                 async(Dispatchers.IO) {
@@ -78,13 +79,16 @@ class MainActivity : ComponentActivity() {
                                         val available = isStreamResponding(channel.url)
                                         withContext(kotlinx.coroutines.Dispatchers.Main) {
                                             checked++
-                                            if (available) channels = channels + channel
+                                            if (available) {
+                                                working.add(channel)
+                                                channels = working.toList()
+                                            }
                                             status = "Checking $checked / ${unique.size} streams... Found ${channels.size} responding."
                                         }
                                     }
                                 }
                             }.awaitAll()
-                            Pair(channels, unique.size)
+                            Pair(working.toList(), unique.size)
                         }
 
                         status = if (loaded.first.isEmpty()) {
