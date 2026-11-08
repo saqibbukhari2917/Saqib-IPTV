@@ -23,8 +23,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -44,11 +49,11 @@ class MainActivity : ComponentActivity() {
             fun refreshChannels() {
                 if (loading) return
                 loading = true
-                status = "Loading channels..."
+                status = "Loading playlists..."
                 scope.launch {
                     try {
                         val loaded = withContext(Dispatchers.IO) {
-                            if (playlistUrl.isBlank()) {
+                            val playlistChannels = if (playlistUrl.isBlank()) {
                                 val pakistan = downloadPlaylist("https://iptv-org.github.io/iptv/countries/pk.m3u")
                                 val india = downloadPlaylist("https://iptv-org.github.io/iptv/countries/in.m3u")
                                 M3uParser.parse(pakistan, "Pakistan") +
@@ -58,14 +63,29 @@ class MainActivity : ComponentActivity() {
                                 require(link.startsWith("http://") || link.startsWith("https://")) {
                                     "Please enter a valid http:// or https:// playlist link."
                                 }
-                                downloadPlaylist(link).let { M3uParser.parse(it) }
+                                M3uParser.parse(downloadPlaylist(link))
                             }
+
+                            val unique = playlistChannels.distinctBy { it.url }
+                            val gate = Semaphore(8)
+                            var checked = 0
+                            val working = unique.map { channel ->
+                                async(Dispatchers.IO) {
+                                    gate.withPermit {
+                                        val available = isStreamResponding(channel.url)
+                                        synchronized(unique) { checked++ }
+                                        channel.takeIf { available }
+                                    }
+                                }
+                            }.awaitAll().filterNotNull()
+                            Pair(working, unique.size)
                         }
-                        channels = loaded.distinctBy { it.url }
-                        status = if (channels.isEmpty()) {
-                            "No channels found. Streams may be unavailable."
+
+                        channels = loaded.first
+                        status = if (loaded.first.isEmpty()) {
+                            "No working streams responded. Tap Refresh to check again."
                         } else {
-                            "Loaded ${channels.size} channels. Some streams may be offline or region-restricted."
+                            "Showing ${loaded.first.size} responding channels out of ${loaded.second}. Refresh to check again."
                         }
                         if (playlistUrl.isNotBlank()) prefs.edit().putString("playlist_url", playlistUrl.trim()).apply()
                     } catch (e: Exception) {
@@ -86,7 +106,7 @@ class MainActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column(Modifier.fillMaxSize().padding(16.dp)) {
                         Text("SAQIB IPTV", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text("Free public Pakistan & India channels", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Available public Pakistan & India channels", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(14.dp))
                         OutlinedTextField(
                             value = playlistUrl, onValueChange = { playlistUrl = it },
@@ -99,10 +119,14 @@ class MainActivity : ComponentActivity() {
                             if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.Refresh, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text(if (loading) "Loading..." else "Load / Refresh Channels")
+                            Text(if (loading) "Checking streams..." else "Refresh Available Channels")
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (loading) {
+                            Spacer(Modifier.height(6.dp))
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                        }
                         Spacer(Modifier.height(14.dp))
                         OutlinedTextField(
                             value = searchText, onValueChange = { searchText = it },
@@ -120,11 +144,11 @@ class MainActivity : ComponentActivity() {
                         val visible = channels.filter {
                             (selectedTab == "All" || it.country == selectedTab) && it.name.contains(searchText, ignoreCase = true)
                         }
-                        Text("${visible.size} channels", fontWeight = FontWeight.SemiBold)
+                        Text("${visible.size} available channels", fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(6.dp))
                         if (visible.isEmpty()) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(if (loading) "Getting channels..." else if (channels.isEmpty()) "Channels will appear here when loading finishes." else "No channels in this category.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (loading) "Checking which streams respond..." else "No available channels found. Tap Refresh to try again.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -167,5 +191,48 @@ private fun downloadPlaylist(link: String): String {
         connection.inputStream.bufferedReader().use { it.readText() }
     } finally {
         connection.disconnect()
+    }
+}
+
+/**
+ * A quick availability probe, not a guarantee of uninterrupted playback.
+ * A successful HTTP response with a non-HTML body is treated as available.
+ */
+private fun isStreamResponding(link: String): Boolean {
+    var connection: HttpURLConnection? = null
+    return try {
+        withTimeout(8000) {
+            connection = (URL(link).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 6000
+                readTimeout = 6000
+                requestMethod = "GET"
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "SaqibIPTV/1.0 (Android)")
+                setRequestProperty("Range", "bytes=0-511")
+            }
+            val response = connection!!.responseCode
+            if (response !in 200..299) return@withTimeout false
+
+            val contentType = connection!!.contentType.orEmpty().lowercase()
+            if ("text/html" in contentType) return@withTimeout false
+
+            val input = connection!!.inputStream
+            val sample = ByteArray(512)
+            val count = input.read(sample)
+            input.close()
+            if (count <= 0) return@withTimeout false
+
+            val prefix = String(sample, 0, count, Charsets.UTF_8)
+                .trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+                .lowercase()
+            !prefix.startsWith("<!doctype html") &&
+                !prefix.startsWith("<html") &&
+                !prefix.startsWith("<head") &&
+                !prefix.startsWith("<body")
+        }
+    } catch (_: Exception) {
+        false
+    } finally {
+        connection?.disconnect()
     }
 }
