@@ -58,7 +58,6 @@ class PlayerActivity : ComponentActivity() {
                     override fun onPlayerError(error: PlaybackException) {
                         playbackError = when (error.errorCode) {
                             PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-                            PlaybackException.ERROR_CODE_IO_NETWORK_TIMEOUT -> "Internet connection ya stream server ka response nahi aa raha."
                             PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
                             PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED -> "Is channel ka stream format supported nahi hai."
                             else -> "Ye channel abhi play nahi ho saka. Mumkin hai stream offline ya region-restricted ho."
