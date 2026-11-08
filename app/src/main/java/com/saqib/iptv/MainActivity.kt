@@ -66,21 +66,27 @@ class MainActivity : ComponentActivity() {
                             }
 
                             val unique = playlistChannels.distinctBy { it.url }
-                            val gate = Semaphore(8)
+                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                channels = emptyList()
+                                status = "Checking 0 / ${unique.size} streams..."
+                            }
+                            val gate = Semaphore(16)
                             var checked = 0
-                            val working = unique.map { channel ->
+                            unique.map { channel ->
                                 async(Dispatchers.IO) {
                                     gate.withPermit {
                                         val available = isStreamResponding(channel.url)
-                                        synchronized(unique) { checked++ }
-                                        channel.takeIf { available }
+                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                            checked++
+                                            if (available) channels = channels + channel
+                                            status = "Checking $checked / ${unique.size} streams... Found ${channels.size} responding."
+                                        }
                                     }
                                 }
-                            }.awaitAll().filterNotNull()
-                            Pair(working, unique.size)
+                            }.awaitAll()
+                            Pair(channels, unique.size)
                         }
 
-                        channels = loaded.first
                         status = if (loaded.first.isEmpty()) {
                             "No working streams responded. Tap Refresh to check again."
                         } else {
@@ -201,8 +207,8 @@ private fun isStreamResponding(link: String): Boolean {
     var connection: HttpURLConnection? = null
     return try {
         connection = (URL(link).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 6000
-            readTimeout = 6000
+            connectTimeout = 2500
+            readTimeout = 2500
             requestMethod = "GET"
             instanceFollowRedirects = true
             setRequestProperty("User-Agent", "SaqibIPTV/1.0 (Android)")
