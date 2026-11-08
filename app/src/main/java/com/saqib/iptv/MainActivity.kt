@@ -37,9 +37,46 @@ class MainActivity : ComponentActivity() {
             var channels by remember { mutableStateOf<List<TvChannel>>(emptyList()) }
             var selectedTab by remember { mutableStateOf("All") }
             var searchText by remember { mutableStateOf("") }
-            var status by remember { mutableStateOf("Paste your M3U playlist link to load channels.") }
+            var status by remember { mutableStateOf("Loading free public Pakistan and India channels...") }
             var loading by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
+
+            fun refreshChannels() {
+                if (loading) return
+                loading = true
+                status = "Loading channels..."
+                scope.launch {
+                    try {
+                        val loaded = withContext(Dispatchers.IO) {
+                            if (playlistUrl.isBlank()) {
+                                val pakistan = downloadPlaylist("https://iptv-org.github.io/iptv/countries/pk.m3u")
+                                val india = downloadPlaylist("https://iptv-org.github.io/iptv/countries/in.m3u")
+                                M3uParser.parse(pakistan, "Pakistan") +
+                                    M3uParser.parse(india, "India")
+                            } else {
+                                val link = playlistUrl.trim()
+                                require(link.startsWith("http://") || link.startsWith("https://")) {
+                                    "Please enter a valid http:// or https:// playlist link."
+                                }
+                                downloadPlaylist(link).let { M3uParser.parse(it) }
+                            }
+                        }
+                        channels = loaded.distinctBy { it.url }
+                        status = if (channels.isEmpty()) {
+                            "No channels found. Streams may be unavailable."
+                        } else {
+                            "Loaded ${channels.size} channels. Some streams may be offline or region-restricted."
+                        }
+                        if (playlistUrl.isNotBlank()) prefs.edit().putString("playlist_url", playlistUrl.trim()).apply()
+                    } catch (e: Exception) {
+                        status = "Could not load channels: ${e.localizedMessage ?: "connection error"}"
+                    } finally {
+                        loading = false
+                    }
+                }
+            }
+
+            LaunchedEffect(Unit) { refreshChannels() }
 
             MaterialTheme(colorScheme = darkColorScheme(
                 primary = Color(0xFF36C98F),
@@ -49,44 +86,16 @@ class MainActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column(Modifier.fillMaxSize().padding(16.dp)) {
                         Text("SAQIB IPTV", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text("Live TV • Your playlist, your channels", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(18.dp))
+                        Text("Free public Pakistan & India channels", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(14.dp))
                         OutlinedTextField(
                             value = playlistUrl, onValueChange = { playlistUrl = it },
-                            modifier = Modifier.fillMaxWidth(), label = { Text("M3U playlist URL") },
-                            placeholder = { Text("https://example.com/playlist.m3u") },
+                            modifier = Modifier.fillMaxWidth(), label = { Text("Optional: your own M3U playlist URL") },
+                            placeholder = { Text("Leave empty to use built-in channels") },
                             singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                         )
                         Spacer(Modifier.height(8.dp))
-                        Button(onClick = {
-                            val link = playlistUrl.trim()
-                            if (!link.startsWith("http://") && !link.startsWith("https://")) {
-                                status = "Please enter a valid http:// or https:// playlist link."
-                            } else {
-                                loading = true
-                                status = "Loading playlist..."
-                                prefs.edit().putString("playlist_url", link).apply()
-                                scope.launch {
-                                    try {
-                                        val body = withContext(Dispatchers.IO) {
-                                            val connection = (URL(link).openConnection() as HttpURLConnection).apply {
-                                                connectTimeout = 15000
-                                                readTimeout = 20000
-                                                requestMethod = "GET"
-                                                setRequestProperty("User-Agent", "SaqibIPTV/1.0")
-                                            }
-                                            try { connection.inputStream.bufferedReader().use { it.readText() } }
-                                            finally { connection.disconnect() }
-                                        }
-                                        val parsed = M3uParser.parse(body)
-                                        channels = parsed
-                                        status = if (parsed.isEmpty()) "No channels found. Check that this is a valid M3U playlist." else "Loaded ${parsed.size} channels successfully."
-                                    } catch (e: Exception) {
-                                        status = "Could not load playlist: ${e.localizedMessage ?: "connection error"}"
-                                    } finally { loading = false }
-                                }
-                            }
-                        }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
+                        Button(onClick = { refreshChannels() }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
                             if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.Refresh, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
@@ -94,7 +103,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(14.dp))
                         OutlinedTextField(
                             value = searchText, onValueChange = { searchText = it },
                             modifier = Modifier.fillMaxWidth(), placeholder = { Text("Search channels") },
@@ -115,7 +124,7 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(6.dp))
                         if (visible.isEmpty()) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(if (channels.isEmpty()) "Your channels will appear here after loading a playlist." else "No channels in this category.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (loading) "Getting channels..." else if (channels.isEmpty()) "Channels will appear here when loading finishes." else "No channels in this category.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -144,5 +153,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+}
+
+private fun downloadPlaylist(link: String): String {
+    val connection = (URL(link).openConnection() as HttpURLConnection).apply {
+        connectTimeout = 20000
+        readTimeout = 30000
+        requestMethod = "GET"
+        setRequestProperty("User-Agent", "SaqibIPTV/1.0")
+    }
+    return try {
+        connection.inputStream.bufferedReader().use { it.readText() }
+    } finally {
+        connection.disconnect()
     }
 }
