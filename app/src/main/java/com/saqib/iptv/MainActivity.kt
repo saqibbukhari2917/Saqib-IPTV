@@ -1,6 +1,7 @@
 package com.saqib.iptv
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,6 +33,17 @@ import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 
+private data class CricketPlatform(val name: String, val detail: String, val url: String)
+
+private val cricketPlatforms = listOf(
+    CricketPlatform("Myco", "Official digital partner for ICC events in Pakistan", "https://www.myco.io/"),
+    CricketPlatform("Tamasha", "Official streaming partner in Pakistan; match access may vary", "https://tamashaweb.com/"),
+    CricketPlatform("Tapmad", "Official sports streaming partner; subscription or login may be required", "https://www.tapmad.com/"),
+    CricketPlatform("ARY ZAP", "Official streaming partner for selected cricket coverage", "https://aryzap.com/"),
+    CricketPlatform("PTV Sports", "Official Pakistani sports broadcaster", "https://www.ptv-sports.com.pk/live-streaming/"),
+    CricketPlatform("Geo Super", "Pakistani sports broadcaster; coverage depends on rights", "https://www.geo.tv/")
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,7 +53,7 @@ class MainActivity : ComponentActivity() {
             var channels by remember { mutableStateOf<List<TvChannel>>(emptyList()) }
             var selectedTab by remember { mutableStateOf("All") }
             var searchText by remember { mutableStateOf("") }
-            var status by remember { mutableStateOf("Loading free public Pakistan and India channels...") }
+            var status by remember { mutableStateOf("Loading public Pakistan, India and sports channels...") }
             var loading by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
 
@@ -52,21 +64,25 @@ class MainActivity : ComponentActivity() {
                 scope.launch {
                     try {
                         val loaded = withContext(Dispatchers.IO) {
-                            val playlistChannels = if (playlistUrl.isBlank()) {
+                            val sports = try {
+                                M3uParser.parse(downloadPlaylist("https://iptv-org.github.io/iptv/categories/sports.m3u"), "Sports")
+                            } catch (_: Exception) { emptyList() }
+
+                            val baseChannels = if (playlistUrl.isBlank()) {
                                 val pakistan = downloadPlaylist("https://iptv-org.github.io/iptv/countries/pk.m3u")
                                 val india = downloadPlaylist("https://iptv-org.github.io/iptv/countries/in.m3u")
                                 M3uParser.parse(pakistan, "Pakistan") +
-                                    M3uParser.parse(india, "India")
+                                    M3uParser.parse(india, "India") + sports
                             } else {
                                 val link = playlistUrl.trim()
                                 require(link.startsWith("http://") || link.startsWith("https://")) {
                                     "Please enter a valid http:// or https:// playlist link."
                                 }
-                                M3uParser.parse(downloadPlaylist(link))
+                                M3uParser.parse(downloadPlaylist(link)) + sports
                             }
 
-                            val unique = playlistChannels.distinctBy { it.url }
-                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            val unique = baseChannels.distinctBy { it.url }
+                            withContext(Dispatchers.Main) {
                                 channels = emptyList()
                                 status = "Checking 0 / ${unique.size} streams..."
                             }
@@ -77,7 +93,7 @@ class MainActivity : ComponentActivity() {
                                 async(Dispatchers.IO) {
                                     gate.withPermit {
                                         val available = isStreamResponding(channel.url)
-                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        withContext(Dispatchers.Main) {
                                             checked++
                                             if (available) {
                                                 working.add(channel)
@@ -115,7 +131,7 @@ class MainActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column(Modifier.fillMaxSize().padding(16.dp)) {
                         Text("SAQIB IPTV", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text("Available public Pakistan & India channels", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Pakistan, India, sports channels & cricket live links", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(14.dp))
                         OutlinedTextField(
                             value = playlistUrl, onValueChange = { playlistUrl = it },
@@ -137,46 +153,71 @@ class MainActivity : ComponentActivity() {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                         }
                         Spacer(Modifier.height(14.dp))
-                        OutlinedTextField(
-                            value = searchText, onValueChange = { searchText = it },
-                            modifier = Modifier.fillMaxWidth(), placeholder = { Text("Search channels") },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }, singleLine = true
-                        )
-                        Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf("All", "Pakistan", "India", "Other").forEach { tab ->
+                            listOf("All", "Pakistan", "India", "Sports", "Cricket Live").forEach { tab ->
                                 FilterChip(selected = selectedTab == tab, onClick = { selectedTab = tab },
-                                    label = { Text(when (tab) { "Pakistan" -> "🇵🇰 Pakistan"; "India" -> "🇮🇳 India"; else -> tab }) })
+                                    label = { Text(tab) })
                             }
                         }
-                        Spacer(Modifier.height(8.dp))
-                        val visible = channels.filter {
-                            (selectedTab == "All" || it.country == selectedTab) && it.name.contains(searchText, ignoreCase = true)
-                        }
-                        Text("${visible.size} available channels", fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(6.dp))
-                        if (visible.isEmpty()) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(if (loading) "Checking which streams respond..." else "No available channels found. Tap Refresh to try again.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        } else {
+                        Spacer(Modifier.height(10.dp))
+                        if (selectedTab == "Cricket Live") {
+                            Text("Official cricket streaming services", fontWeight = FontWeight.SemiBold)
+                            Text("Tap a service to open its website/app. Live match availability, login and subscription depend on broadcast rights.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(visible) { channel ->
+                                items(cricketPlatforms) { platform ->
                                     Card(modifier = Modifier.fillMaxWidth().clickable {
-                                        startActivity(Intent(this@MainActivity, PlayerActivity::class.java).apply {
-                                            putExtra("channel_name", channel.name)
-                                            putExtra("channel_url", channel.url)
-                                        })
+                                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(platform.url)))
                                     }, shape = RoundedCornerShape(14.dp),
                                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                                         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                             Spacer(Modifier.width(12.dp))
                                             Column(Modifier.weight(1f)) {
-                                                Text(channel.name, fontWeight = FontWeight.SemiBold)
-                                                Text(channel.group.ifBlank { channel.country }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(platform.name, fontWeight = FontWeight.SemiBold)
+                                                Text(platform.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
-                                            Text("PLAY", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                            Text("OPEN", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = searchText, onValueChange = { searchText = it },
+                                modifier = Modifier.fillMaxWidth(), placeholder = { Text("Search channels") },
+                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }, singleLine = true
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            val visible = channels.filter {
+                                (selectedTab == "All" || it.country == selectedTab) &&
+                                    it.name.contains(searchText, ignoreCase = true)
+                            }
+                            Text("${visible.size} available channels", fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(6.dp))
+                            if (visible.isEmpty()) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(if (loading) "Checking which streams respond..." else "No available channels found. Tap Refresh to try again.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            } else {
+                                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(visible) { channel ->
+                                        Card(modifier = Modifier.fillMaxWidth().clickable {
+                                            startActivity(Intent(this@MainActivity, PlayerActivity::class.java).apply {
+                                                putExtra("channel_name", channel.name)
+                                                putExtra("channel_url", channel.url)
+                                            })
+                                        }, shape = RoundedCornerShape(14.dp),
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                                            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                                Spacer(Modifier.width(12.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(channel.name, fontWeight = FontWeight.SemiBold)
+                                                    Text(channel.group.ifBlank { channel.country }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                                Text("PLAY", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                            }
                                         }
                                     }
                                 }
@@ -203,10 +244,7 @@ private fun downloadPlaylist(link: String): String {
     }
 }
 
-/**
- * A quick availability probe, not a guarantee of uninterrupted playback.
- * A successful HTTP response with a non-HTML body is treated as available.
- */
+/** A successful HTTP response is only a rough availability check, not a playback guarantee. */
 private fun isStreamResponding(link: String): Boolean {
     var connection: HttpURLConnection? = null
     return try {
@@ -220,19 +258,15 @@ private fun isStreamResponding(link: String): Boolean {
         }
         val response = connection!!.responseCode
         if (response !in 200..299) return false
-
         val contentType = connection!!.contentType.orEmpty().lowercase()
         if ("text/html" in contentType) return false
-
         val input = connection!!.inputStream
         val sample = ByteArray(512)
         val count = input.read(sample)
         input.close()
         if (count <= 0) return false
-
         val prefix = String(sample, 0, count, Charsets.UTF_8)
-            .trimStart('\uFEFF', ' ', '\n', '\r', '\t')
-            .lowercase()
+            .trimStart('\uFEFF', ' ', '\n', '\r', '\t').lowercase()
         !prefix.startsWith("<!doctype html") &&
             !prefix.startsWith("<html") &&
             !prefix.startsWith("<head") &&
