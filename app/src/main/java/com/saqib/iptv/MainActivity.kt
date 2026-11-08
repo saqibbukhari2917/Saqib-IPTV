@@ -29,7 +29,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -201,35 +200,33 @@ private fun downloadPlaylist(link: String): String {
 private fun isStreamResponding(link: String): Boolean {
     var connection: HttpURLConnection? = null
     return try {
-        withTimeout(8000) {
-            connection = (URL(link).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 6000
-                readTimeout = 6000
-                requestMethod = "GET"
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "SaqibIPTV/1.0 (Android)")
-                setRequestProperty("Range", "bytes=0-511")
-            }
-            val response = connection!!.responseCode
-            if (response !in 200..299) return@withTimeout false
-
-            val contentType = connection!!.contentType.orEmpty().lowercase()
-            if ("text/html" in contentType) return@withTimeout false
-
-            val input = connection!!.inputStream
-            val sample = ByteArray(512)
-            val count = input.read(sample)
-            input.close()
-            if (count <= 0) return@withTimeout false
-
-            val prefix = String(sample, 0, count, Charsets.UTF_8)
-                .trimStart('\uFEFF', ' ', '\n', '\r', '\t')
-                .lowercase()
-            !prefix.startsWith("<!doctype html") &&
-                !prefix.startsWith("<html") &&
-                !prefix.startsWith("<head") &&
-                !prefix.startsWith("<body")
+        connection = (URL(link).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 6000
+            readTimeout = 6000
+            requestMethod = "GET"
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "SaqibIPTV/1.0 (Android)")
+            setRequestProperty("Range", "bytes=0-511")
         }
+        val response = connection!!.responseCode
+        if (response !in 200..299) return false
+
+        val contentType = connection!!.contentType.orEmpty().lowercase()
+        if ("text/html" in contentType) return false
+
+        val input = connection!!.inputStream
+        val sample = ByteArray(512)
+        val count = input.read(sample)
+        input.close()
+        if (count <= 0) return false
+
+        val prefix = String(sample, 0, count, Charsets.UTF_8)
+            .trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+            .lowercase()
+        !prefix.startsWith("<!doctype html") &&
+            !prefix.startsWith("<html") &&
+            !prefix.startsWith("<head") &&
+            !prefix.startsWith("<body")
     } catch (_: Exception) {
         false
     } finally {
