@@ -10,10 +10,6 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
-            android:name=".PlayerActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
-        <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true">
