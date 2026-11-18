@@ -1,19 +1,17 @@
 # Saqib IPTV
 
-Android IPTV player that loads channels from an M3U playlist URL supplied by the user.
+Saqib IPTV is an Android WebView app that opens the website https://thugtv.st/.
 
-## Features
-- Paste an M3U or M3U8 playlist URL and load channels.
-- All, Pakistan, India, and Other channel filters.
-- Search channels by name.
-- Tap a channel to play it using AndroidX Media3.
-- Remembers the last playlist URL on the device.
-- GitHub Actions builds a debug APK on every push to main.
+## Branding
+- App name: Saqib IPTV
+- Launcher icon: supplied realistic portrait
+- Opening screen: same portrait, shown while the website loads
 
 ## Build
 Run `gradle --no-daemon assembleDebug`.
 
 APK output: `app/build/outputs/apk/debug/app-debug.apk`.
+GitHub Actions builds and uploads the debug APK artifact after each push to `main`.
 
-## Playlist and content
-The app does not bundle paid or copyrighted channel streams. Add an M3U playlist URL that you own or are authorized to use. Channel availability and playback depend on the playlist provider and stream format.
+## Notes
+This app is a website wrapper. Website features, sign-in, streams and availability are controlled by thugtv.st. The app does not host or provide streaming content itself.

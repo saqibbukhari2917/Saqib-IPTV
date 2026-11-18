@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Saqib IPTV APK
 
 on:
   push:
